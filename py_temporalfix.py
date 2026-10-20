@@ -3,6 +3,7 @@ import logging
 from pathlib import Path
 import signal
 import sys
+from typing import Literal
 
 from arg_parse import arg_parse
 from hytils import lightcyan, red
@@ -16,6 +17,8 @@ from denc import (
     EncoderThread,
     ProgressThread,
     Device,
+    VideoStream,
+    ,
 )
 
 
@@ -76,6 +79,9 @@ Please install these dependencies (refer to the documentation).
     out_media = in_media.to_output(filepath=output_fp)
     dlogger.debug(out_media.video)
 
+    # Output of the script pixel format:
+    out_pixfmt: Literal['yuv420p', 'yuv444p16le']
+    out_pixfmt = out_media.video.pix_fmt
 
     dlogger.debug(f"Python executable dir: {sys.executable}")
 
@@ -83,14 +89,17 @@ Please install these dependencies (refer to the documentation).
     vs_command: list[str] = [
         vspipe_exe,
         str(root_dir / "vs" / "vstf.vpy"),
-        "--arg", f"input_fp=\"{in_fp}\"",
+        "--arg", f"input_fp=\"{str(in_fp)}\"",
         "--arg", f"tr={radius}",
         "--arg", f"strength={strength}",
-        "--arg", f"pix_fmt={out_media.video.pix_fmt}",
+        "--arg", f"pix_fmt={out_pixfmt}",
         "-",
     ]
     dlogger.debug(lightcyan("VS command:"))
     dlogger.debug(' '.join(vs_command))
+
+
+
 
 
 
