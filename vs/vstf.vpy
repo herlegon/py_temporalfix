@@ -1,12 +1,15 @@
 from pathlib import Path
 import sys
 from typing import Literal
-this_dir: Path = Path(__file__).resolve().parents[1]
+__file_dir__ = Path(__file__).resolve().parent
+root = __file_dir__.parent
 for subd in ("Scripts", "vs-scripts", "vs-plugins", ""):
-    sys.path.insert(0, str(this_dir / "external" / "vspython" / subd))
-sys.path.insert(0, str(this_dir))
+    sys.path.insert(0, str(__file_dir__.parent / "external" / "vspython" / subd))
+sys.path.insert(0, str(__file_dir__))
+sys.path.insert(0, str(root))
 from multiprocessing import cpu_count
-from .vs_temporalfix import vs_temporalfix
+from vs_temporalfix import vs_temporalfix
+
 import vapoursynth as vs
 core = vs.core
 core.num_threads = int(cpu_count() - 2)
@@ -18,6 +21,9 @@ clip = core.bs.VideoSource(source=input_fp.replace("\"", ""), cachemode = 0)
 # clip = clip.std.SetFrameProps(_Primaries=vs.MATRIX_BT709)
 # clip = clip.std.SetFrameProps(_ChromaLocation=vs.MATRIX_BT709)
 # clip = clip.std.SetFrameProps(_ColorRange=vs.RANGE_FULL)
+
+print(clip.format)
+print(f"pix_fmt: {pix_fmt}")
 
 strength: int
 tr: int
