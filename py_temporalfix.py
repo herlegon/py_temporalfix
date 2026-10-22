@@ -6,6 +6,7 @@ from pprint import pprint
 import signal
 import subprocess
 import sys
+import time
 
 
 __file_dir__ = Path(__file__).resolve().parent
@@ -113,7 +114,7 @@ Please install these dependencies (refer to the documentation).
         "--arg", f"input_fp=\"{str(in_fp)}\"",
         "--arg", f"tr={t_radius}",
         "--arg", f"strength={strength}",
-        "--arg", f"pix_fmt={vs_out_pix_fmt.value}",
+        "--arg", f"out_pix_fmt={vs_out_pix_fmt.value}",
         "-",
     ]
     dlogger.debug(lightcyan("VS command:"))
@@ -137,7 +138,7 @@ Please install these dependencies (refer to the documentation).
     # Clean environnment for vs
     vs_env = os.environ.copy()
     if sys.platform == "win32":
-        vs_env.pop("PATH", None)
+        del vs_env["PATH"]
 
     for k, v in vs_env.copy().items():
         if k in protected_vars:
@@ -148,14 +149,14 @@ Please install these dependencies (refer to the documentation).
             if n in k_lower:
                 try:
                     del vs_env[k]
-                    dlogger.debug(f"removing: {k}: {v}")
+                    # dlogger.debug(f"removing: {k}: {v}")
                 except:
                     pass
 
             if n in v_lower:
                 try:
                     del vs_env[k]
-                    dlogger.debug(f"removing: {k}: {v}")
+                    # dlogger.debug(f"removing: {k}: {v}")
                 except:
                     pass
 
@@ -190,23 +191,40 @@ Please install these dependencies (refer to the documentation).
     vs_env['PATH'] = sep.join(vs_path)
 
     # dlogger.debug(f"Environment:\n{pformat(vs_env)}")
-    # Environnment
-    if debug:
-        extract_info_from_vs_script(vs_command=vs_command, vs_env=vs_env)
+
+    # if debug:
+    #     extract_info_from_vs_script(vs_command=vs_command, vs_env=vs_env)
 
     encoder_command: list[str] = generate_encoder_command(media=out_media)
     parent_dir: str = out_media.video.filepath.parent
     if parent_dir:
         os.makedirs(parent_dir, exist_ok=True)
 
-    # Encoder process
-    encoder_subprocess: subprocess.Popen | None = None
+    # Vs process
+    vs_subprocess: subprocess.Popen = None
     try:
+        vs_subprocess = subprocess.Popen(
+            vs_command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=None,
+            env=vs_env,
+        )
+    except Exception as e:
+        dlogger.critical(red(f"[E] Unexpected error: {type(e)}"))
+        sys.exit()
+
+    # Encoder process
+    encoder_subprocess: subprocess.Popen = None
+    try:
+        # VSPipe -> FFmpeg
         encoder_subprocess = subprocess.Popen(
             encoder_command,
-            stdin=subprocess.PIPE,
+            stdin=vs_subprocess.stdout,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+            stderr= None,
+            text=True,
+            bufsize=1,
         )
     except Exception as e:
         dlogger.critical(red(f"[E] Unexpected error: {type(e)}"))
@@ -215,68 +233,88 @@ Please install these dependencies (refer to the documentation).
         dlogger.critical(red(f"[E] Encoder process is not started"))
         sys.exit()
 
-    # Vs process
-    vs_subprocess: subprocess.Popen | None = None
-    try:
-        vs_subprocess = subprocess.Popen(
-            vs_command,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=vs_env,
-        )
-    except Exception as e:
-        dlogger.critical(red(f"[E] Unexpected error: {type(e)}"))
-        sys.exit()
 
     dlogger.debug(lightcyan("Encoder command:"))
     dlogger.debug(lightgreen(' '.join(encoder_command)))
-
 
     frame_count: int = in_media.video.frame_count
     nbytes: int = out_media.video.pipe_format.nbytes
     frame: bytes = None
     line: str = ''
-    os.set_blocking(encoder_subprocess.stdout.fileno(), False)
-    os.set_blocking(vs_subprocess.stderr.fileno(), False)
-    dlogger.info(f"Processing:")
+
+
+    vs_subprocess.stdout.close()
+    frame_count = in_media.video.frame_count
+    t0 = last_t = time.perf_counter()
+    last_n = 0
     try:
-        for _ in range(frame_count):
-            # print(f"reading frame no. {i}", end="\r")
-            frame: bytes = vs_subprocess.stdout.read(nbytes)
-            if frame is None:
-                dlogger.critical(red("Frame is none"))
-            encoder_subprocess.stdin.write(frame)
-
-            line = encoder_subprocess.stdout.readline().decode('utf-8')
-            if line:
-                print(line.strip(), end='\r', file=sys.stderr)
-
-            line = vs_subprocess.stderr.readline().decode('utf-8')
-            if line:
-                print(line.strip(), end='\r', file=sys.stderr)
+        for line in encoder_subprocess.stdout:        # se termine à l'EOF
+            key, _, value = line.strip().partition("=")
+            if key == "frame" and value.isdigit():
+                done = int(value)
+                now = time.perf_counter()
+                if now - last_t >= 1.0:
+                    inst_fps = (done - last_n) / (now - last_t)
+                    last_n, last_t = done, now
+                    eta = (frame_count - done) / inst_fps if inst_fps > 0 else 0.0
+                    print(f"{done}/{frame_count}  {inst_fps:6.2f} fps  ETA {eta:5.0f}s",
+                        end="\r", file=sys.stdout)
         print()
-    except:
-        pass
+        rc_enc = encoder_subprocess.wait()
+        rc_vs = vs_subprocess.wait()
+    except BaseException:
+        for p in (vs_subprocess, encoder_subprocess):
+            if p.poll() is None:
+                p.kill()
+        raise
 
-    stdout_b: bytes | None = None
-    stderr_b: bytes | None = None
-    try:
-        # Arbitrary timeout value
-        stdout_b, stderr_b = encoder_subprocess.communicate(timeout=10)
-    except:
-        encoder_subprocess.kill()
-        return
+    if rc_enc != 0 or rc_vs != 0:
+        dlogger.critical(red(f"Échec : ffmpeg={rc_enc}, VSPipe={rc_vs}"))
 
-    if stdout_b is not None:
-        stdout = stdout_b.decode('utf-8)')
-        if stdout:
-            dlogger.debug(f"FFmpeg stdout:\n{stdout}")
 
-    if stderr_b is not None:
-        stderr = stderr_b.decode('utf-8)')
-        if stderr:
-            dlogger.debug(f"FFmpeg stderr:\n{stderr}")
+
+    # os.set_blocking(encoder_subprocess.stdout.fileno(), False)
+    # os.set_blocking(vs_subprocess.stderr.fileno(), False)
+    # dlogger.debug(lightgreen(f"nbytes={nbytes}"))
+    # dlogger.info(f"Processing:")
+    # try:
+    #     for i in range(frame_count):
+    #         print(f"reading frame no. {i}", end="\r")
+    #         frame: bytes = vs_subprocess.stdout.read(nbytes)
+    #         if frame is None:
+    #             dlogger.critical(red("Frame is none"))
+    #         encoder_subprocess.stdin.write(frame)
+
+    #         line = encoder_subprocess.stdout.readline().decode('utf-8')
+    #         if line:
+    #             print(line.strip(), end='\r', file=sys.stderr)
+
+    #         line = vs_subprocess.stderr.readline().decode('utf-8')
+    #         if line:
+    #             print(line.strip(), end='\r', file=sys.stderr)
+    #     print()
+    # except:
+    #     pass
+
+    # dlogger.info(f"Wait for the end...")
+    # stdout_b: bytes | None = None
+    # stderr_b: bytes | None = None
+    # try:
+    #     # Arbitrary timeout value
+    #     stdout_b, stderr_b = encoder_subprocess.communicate(timeout=10)
+    # except:
+    #     encoder_subprocess.kill()
+    #     return
+
+    # if stdout_b is not None:
+    #     stdout = stdout_b.decode('utf-8)')
+    #     if stdout:
+    #         dlogger.debug(f"FFmpeg stdout:\n{stdout}")
+
+    # if stderr_b is not None:
+    #     stderr = stderr_b.decode('utf-8)')
+    #     if stderr:
+    #         dlogger.debug(f"FFmpeg stderr:\n{stderr}")
 
 
 
