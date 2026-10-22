@@ -8,7 +8,9 @@ for subd in ("Scripts", "vs-scripts", "vs-plugins", ""):
 sys.path.insert(0, str(__file_dir__))
 sys.path.insert(0, str(root))
 from multiprocessing import cpu_count
-from vs_temporalfix import vs_temporalfix
+if sys.platform == "win32":
+    from vs_temporalfix import vs_temporalfix
+
 
 import vapoursynth as vs
 core = vs.core
@@ -31,12 +33,14 @@ if clip.format != vs.YUV444P16:
     clip = core.resize.Lanczos(
         clip, format=vs.YUV444P16, matrix_in_s="709"
     )
-clip = vs_temporalfix(
-    clip,
-    strength=int(strength),
-    tr=int(tr),
-    debug=False
-)
+
+if sys.platform == "win32":
+    clip = vs_temporalfix(
+        clip,
+        strength=int(strength),
+        tr=int(tr),
+        debug=False
+    )
 
 pix_fmt: Literal['yuv420p', 'yuv444p16le']
 if pix_fmt == 'yuv444p16le' and clip.format != vs.YUV444P16:

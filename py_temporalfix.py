@@ -1,15 +1,12 @@
-from argparse import ArgumentParser, ArgumentTypeError, Namespace
+from argparse import Namespace
 import logging
 import os
 from pathlib import Path
-from pprint import pformat, pprint
+from pprint import pprint
 import signal
 import subprocess
 import sys
-from typing import Literal
 
-from arg_parse import arg_parse
-from hytils import lightcyan, lightgreen, red, yellow
 
 __file_dir__ = Path(__file__).resolve().parent
 sys.path.insert(0, str(__file_dir__))
@@ -28,6 +25,9 @@ from denc import (
     generate_encoder_command,
 )
 import torch
+from arg_parse import arg_parse
+from hytils import lightcyan, lightgreen, red, yellow
+
 from vs.vsscript import extract_info_from_vs_script
 
 
@@ -39,7 +39,8 @@ def main():
     # Verify the installation
     vspipe_exe: Path = __file_dir__ / "external" / "vspython" / "VSPipe.exe"
     if sys.platform == "linux":
-        vspipe_exe = "vspipe"
+        vs_env_dir: Path = Path(os.environ.get("VS_ENV_DIR", Path.home() / "vs-env")).expanduser()
+        vspipe_exe = vs_env_dir / "bin" / "vspipe"
 
     if not vspipe_exe.exists(follow_symlinks=True):
         sys.exit(red(f"""
@@ -120,12 +121,43 @@ Please install these dependencies (refer to the documentation).
 
     # Clean environment for vspython
     # vs_path: list[str] = []
-    forbidden_names: tuple[str] = (
+    forbidden_vars: tuple[str] = (
         'python',
         'conda',
         'vapoursynth',
         'ffmpeg',
     )
+
+    protected_vars: tuple[str] = []
+    if sys.platform == 'linux':
+        protected_vars = (
+            "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR", "SHELL", "XDG_RUNTIME_DIR", "DISPLAY",
+        )
+
+    # Clean environnment for vs
+    vs_env = os.environ.copy()
+    if sys.platform == "win32":
+        vs_env.pop("PATH", None)
+
+    for k, v in vs_env.copy().items():
+        if k in protected_vars:
+            continue
+
+        k_lower, v_lower = k.lower(), v.lower()
+        for n in forbidden_vars:
+            if n in k_lower:
+                try:
+                    del vs_env[k]
+                    dlogger.debug(f"removing: {k}: {v}")
+                except:
+                    pass
+
+            if n in v_lower:
+                try:
+                    del vs_env[k]
+                    dlogger.debug(f"removing: {k}: {v}")
+                except:
+                    pass
 
     # Create path used by vs subprocess
     vs_path: list[str] = []
@@ -135,40 +167,32 @@ Please install these dependencies (refer to the documentation).
             vs_path.insert(0, str(__file_dir__ / "external" / "vspython" / dir))
 
     elif sys.platform == "linux":
-        for dir in (
-            "/usr/lib/x86_64-linux-gnu/vapoursynth",
-            "/usr/lib/bin"
-        ):
-            vs_path.insert(0, dir)
-        sep = ':'
+        venv_bin = vs_env_dir / "bin"
+        venv_lib = vs_env_dir / "lib"
+
+        # PATH : venv d'abord, puis le strict minimum système
+        for d in ("/usr/local/bin", "/usr/bin", "/bin"):
+            vs_path.append(d)
+        vs_path.insert(0, str(venv_bin))
+
+        # Le Python embarqué dans vspipe ne lit pas VIRTUAL_ENV :
+        # il faut lui donner explicitement les site-packages du venv.
+        site_pkgs = [str(p) for p in sorted(venv_lib.glob("python*/site-packages"))]
+        if site_pkgs:
+            vs_env["PYTHONPATH"] = sep.join(site_pkgs)
+        vs_env["VIRTUAL_ENV"] = str(vs_env_dir)
+
+        # Bibliothèques partagées (libvapoursynth-script.so, plugins…)
+        ld_paths = [str(venv_lib)] + site_pkgs
+        vs_env["LD_LIBRARY_PATH"] = sep.join(ld_paths)
 
     vs_path.insert(0, str(__file_dir__))
-    # Clean environnment for vs
-    vs_env = os.environ.copy()
-    if sys.platform == 'win32':
-        del vs_env['PATH']
-        for k, v in vs_env.copy().items():
-            k_lower, v_lower = k.lower(), v.lower()
-            for n in forbidden_names:
-                if n in k_lower:
-                    try:
-                        del vs_env[k]
-                        dlogger.debug(f"removing: {k}: {v}")
-                    except:
-                        pass
-
-                if n in v_lower:
-                    try:
-                        del vs_env[k]
-                        dlogger.debug(f"removing: {k}: {v}")
-                    except:
-                        pass
-        vs_env['PATH'] = sep.join(vs_path)
+    vs_env['PATH'] = sep.join(vs_path)
 
     # dlogger.debug(f"Environment:\n{pformat(vs_env)}")
     # Environnment
-    # if debug:
-    #     extract_info_from_vs_script(vs_command=vs_command, vs_env=vs_env)
+    if debug:
+        extract_info_from_vs_script(vs_command=vs_command, vs_env=vs_env)
 
     encoder_command: list[str] = generate_encoder_command(media=out_media)
     parent_dir: str = out_media.video.filepath.parent
