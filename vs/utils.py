@@ -1,0 +1,339 @@
+
+# Script by pifroggi https://github.com/pifroggi/vs_temporalfix
+# or tepete and pifroggi on Discord
+
+import re
+import math
+import vapoursynth as vs
+
+core = vs.core
+
+
+def temporal_median(clip, radius=1, planes=None):
+    # fallback plugin because zsmooth does not support non AVX2 CPUs
+    if hasattr(core, "zsmooth"):
+        return core.zsmooth.TemporalMedian(clip, radius=radius, planes=planes)
+    else:
+        return core.tmedian.TemporalMedian(clip, radius=radius, planes=planes)
+
+
+def repair(clip, repairclip, mode=[1]):
+    # fallback plugin because zsmooth does not support non AVX2 CPUs
+    if hasattr(core, "zsmooth"):
+        return core.zsmooth.Repair(clip, repairclip, mode=mode)
+    else:
+        return core.rgvs.Repair(clip, repairclip, mode=mode)
+
+
+def median(clip, radius=1, planes=None):
+    # fallback plugin because zsmooth does not support non AVX2 CPUs
+    if hasattr(core, "zsmooth"):
+        return core.zsmooth.Median(clip, radius=radius, planes=planes)
+    elif radius == 1:
+        return core.std.Median(clip, planes=planes)
+    else:
+        return core.ctmf.CTMF(clip, radius=radius, planes=planes)
+
+
+def basic_expr(clips, expr, format=None):
+    # backend for basic exprs supported by std.Expr
+    if hasattr(core, "akarin"):
+        return core.akarin.Expr(clips, expr, format=format)
+    else:
+        return core.std.Expr(clips, expr, format=format)
+
+
+def advanced_expr(clips, expr, format=None):
+    # backend for advanced exprs not possible with std.Expr
+    return core.akarin.Expr(clips, expr, format=format)
+
+
+def box_blur(clip, planes=None, hradius=1, hpasses=1, vradius=1, vpasses=1):
+    # optional plugin for slight speed boost
+    if hasattr(core, "vszip"):
+        return core.vszip.BoxBlur(clip, planes=planes, hradius=hradius, hpasses=hpasses, vradius=vradius, vpasses=vpasses)
+    else:
+        return core.std.BoxBlur(clip, planes=planes, hradius=hradius, hpasses=hpasses, vradius=vradius, vpasses=vpasses)
+
+
+def min_blur(clip, planes=[0, 1, 2]):
+    # simplified function from G41Fun https://github.com/Vapoursynth-Plugins-Gitify/G41Fun
+    # original avisynth function by Didée https://avisynth.nl/index.php/MinBlur
+
+    if clip.format.num_planes == 1:
+        planes = [0]
+    if isinstance(planes, int):
+        planes = [planes]
+    
+    mat1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
+    mat2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
+    RG11 = core.std.Convolution(clip, matrix=mat1, planes=planes).std.Convolution(matrix=mat2, planes=planes)
+    RG4  = median(clip, radius=2, planes=planes)
+    expr = "x y - x z - * 0 < x dup y - abs x z - abs < y z ? ?"
+    return basic_expr([clip, RG11, RG4], [expr if i in planes else "" for i in range(clip.format.num_planes)])
+
+
+def average_color_fix(clip, ref, radius=4, passes=4):
+    # simplified from https://github.com/pifroggi/vs_colorfix
+    blurred_reference = box_blur(ref, hradius=radius, hpasses=passes, vradius=radius, vpasses=passes)
+    blurred_clip = box_blur(clip, hradius=radius, hpasses=passes, vradius=radius, vpasses=passes)
+    diff_clip = core.std.MakeDiff(blurred_reference, blurred_clip)
+    return core.std.MergeDiff(clip, diff_clip)
+
+
+def average_color_fix_fast(clip, ref, downscale_factor=8):
+    # faster but faint blocky artifacts
+    width  = int(clip.width  / downscale_factor) >> clip.format.subsampling_w << clip.format.subsampling_w
+    height = int(clip.height / downscale_factor) >> clip.format.subsampling_h << clip.format.subsampling_h
+    downscaled_reference = core.resize.Bilinear(ref,  width=width, height=height)
+    downscaled_clip = core.resize.Bilinear(clip, width=width, height=height)
+    diff_clip = core.std.MakeDiff(downscaled_reference, downscaled_clip)
+    diff_clip = core.resize.Bilinear(diff_clip, width=clip.width, height=clip.height)
+    return core.std.MergeDiff(clip, diff_clip)
+
+
+def frequency_merge(low, high, radius=40, passes=3):
+    # merges low freqs of one clip with high freqs of another clip
+    low_remaining  = box_blur(low,  hradius=radius, hpasses=passes, vradius=radius, vpasses=passes)
+    high_removed   = box_blur(high, hradius=radius, hpasses=passes, vradius=radius, vpasses=passes)
+    high_remaining = core.std.MakeDiff(high, high_removed)
+    return core.std.MergeDiff(low_remaining, high_remaining)
+
+
+def tweak_darks(src, strength=2.5, amp=0.2):
+    # simplified DitherLumaRebuild function that works on full range
+    # DitherLumaRebuild function from G41Fun https://github.com/Vapoursynth-Plugins-Gitify/G41Fun
+    # originally created by cretindesalpes https://forum.doom9.org/showthread.php?p=1548318
+    bd = src.format.bits_per_sample
+    scale = 1 << (bd - 8)
+
+    x = "x" if bd == 8 else f"x {scale} /"
+    t = f"{x} 255 / 0 max 1 min"
+    k = (strength - 1) * amp
+    e = f"{k} {1 + amp} {(1 + amp) * amp} {t} {amp} + / - * {t} {1 - k} * + {1 << bd} *"
+    expr = [e] + [""] * (src.format.num_planes - 1)
+    return basic_expr([src], expr)
+
+
+def contrasharp(clip, src, rep=24, planes=[0, 1, 2]):
+    # simplified function from G41Fun https://github.com/Vapoursynth-Plugins-Gitify/G41Fun
+    # original avisynth function by Didée at the VERY GRAINY thread https://forum.doom9.org/showthread.php?p=1076491
+
+    if clip.format.num_planes == 1:
+        planes = [0]
+    if isinstance(planes, int):
+        planes = [planes]
+
+    mat1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
+    mat2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
+    bd   = clip.format.bits_per_sample
+    mid  = 1 << (bd - 1)
+    num  = clip.format.num_planes
+
+    s    = min_blur(clip, planes)  # damp down remaining spots of the denoised clip
+    RG11 = core.std.Convolution(s, matrix=mat1, planes=planes).std.Convolution(matrix=mat2, planes=planes)
+    ssD  = core.std.MakeDiff(s, RG11, planes)  # the difference of a simple kernel blur
+    allD = core.std.MakeDiff(src, clip, planes)  # the difference achieved by the denoising
+    ssDD = repair(ssD, allD, [rep if i in planes else 0 for i in range(num)])  # limit the difference to the max of what the denoising removed locally
+    expr = "x {} - abs y {} - abs < x y ?".format(mid, mid)  # abs(diff) after limiting may not be bigger than before
+    ssDD = basic_expr([ssDD, ssD], [expr if i in planes else "" for i in range(num)])
+    return core.std.MergeDiff(clip, ssDD, planes)  # apply the limited difference (sharpening is just inverse blurring)
+
+
+def exclude_regions(clip, replacement, exclude=None):
+    # simplified ReplaceFrames function from fvsfunc https://github.com/Irrational-Encoding-Wizardry/fvsfunc
+    # which is a port of ReplaceFramesSimple by James D. Lin http://avisynth.nl/index.php/RemapFrames
+
+    if exclude is None:
+        return clip
+    if not isinstance(exclude, str):
+        raise TypeError('vs_temporalfix: Exclusions are set like this: exclude="[100 300] [600 900] [2000 2500]", where the first number in the brackets is the start frame and the second is the end frame (inclusive).')
+
+    exclude = exclude.replace(",", " ").replace(":", " ")
+    frames = re.findall(r"\d+(?!\d*\s*\d*\s*\d*\])", exclude)
+    ranges = re.findall(r"\[\s*\d+\s+\d+\s*\]", exclude)
+    maps = []
+    for range_ in ranges:
+        maps.append([int(x) for x in range_.strip("[ ]").split()])
+    for frame in frames:
+        maps.append([int(frame), int(frame)])
+
+    replace_frames = []
+    for start, end in maps:
+        if start > end:
+            raise ValueError("vs_temporalfix: Exclusions start frame is bigger than end frame: [{} {}]".format(start, end))
+        if start >= clip.num_frames:
+            raise ValueError("vs_temporalfix: Exclusions start frame {} is outside the clip. The last valid frame is {}.".format(start, clip.num_frames - 1))
+        if end >= clip.num_frames:
+            raise ValueError("vs_temporalfix: Exclusions end frame {} is outside the clip. The last valid frame is {}.".format(end, clip.num_frames - 1))
+        replace_frames.extend(range(start, end + 1))
+
+    if not replace_frames:
+        return clip
+    return clip.vszip.RFS(replacement, frames=replace_frames)
+
+
+def lowfreq_denoise(low, high, motionmask, thsad=200, tr=6):
+    # temporally denoise low frequencies only
+
+    bs  = 8
+    pel = 1
+
+    # downscale clips
+    downscale_factor = 8
+    width  = int(low.width  / downscale_factor) >> low.format.subsampling_w << low.format.subsampling_w
+    height = int(low.height / downscale_factor) >> low.format.subsampling_h << low.format.subsampling_h
+    low_down   = core.resize.Bicubic(low,      width=width, height=height)
+    motionmask = core.resize.Point(motionmask, width=width, height=height)
+    motionmask = core.std.Maximum(motionmask)                  # expand mask
+    prefilter  = tweak_darks(low_down, strength=2.5, amp=0.2)  # brighten darks
+
+    # create superclips
+    pref_sup = core.mvu.Super(prefilter, blksize=bs, overlap=bs // 2, pel=pel, sharp=1, rfilter=2)
+    low_sup  = core.mvu.Super(low_down,  blksize=bs, overlap=bs // 2, pel=pel, sharp=0, onelevel=True)
+
+    # analyse and degrain
+    low_vecs = core.mvu.AnalyseMany(pref_sup, radius=tr, search=2, searchparam=1, mvlambda=0, lsad=400, plevel=0, pnew=0, pzero=0, globalmv=False)
+    low_degr = core.mvu.Degrain(low_down, low_sup, low_vecs, thsad=[thsad, thsad], planes=[0])
+
+    # merge
+    low_degr = core.std.MaskedMerge(low_degr, low_down, motionmask)               # reduce blending/ghosting
+    low_degr = core.resize.Bicubic(low_degr, width=low.width, height=low.height)  # resize back to original res
+    return frequency_merge(low_degr, high, 10, 3)                                 # merge low freqs with original high freqs
+
+
+def gen_shifts(clip, radius):
+    # create shifted versions of the input clip with mirror padding
+    frames = clip.num_frames
+    prefix = clip[1:radius + 1][::-1]
+    suffix = clip[-2:-radius - 2:-1]
+    padded = prefix + clip + suffix
+
+    shifts = []
+    for offset in range(-radius, radius + 1):
+        if offset == 0:
+            shifts.append(clip)
+        else:
+            start = radius + offset
+            shifts.append(padded[start:start + frames])
+
+    return shifts
+
+
+def get_spans(length, tile_length, count):
+    if count == 1:
+        return [(0, length, 0, length)]
+
+    max_start = length - tile_length
+    starts = [round(i * max_start / (count - 1)) for i in range(count)]
+
+    spans = []
+    for i, start in enumerate(starts):
+        dst0 = 0 if i == 0 else (starts[i - 1] + tile_length + start) // 2
+        dst1 = length if i == count - 1 else (start + tile_length + starts[i + 1]) // 2
+        spans.append((start, start + tile_length, dst0, dst1))
+    return spans
+
+
+def get_tiles(clip_w, clip_h, tiles, overlap=0):
+    # calculate tile size and choose the most square layout
+    if tiles not in (1, 2, 4, 6, 8):
+        raise ValueError("vs_temporalfix: Tiles must be 1, 2, 4, 6, or 8.")
+
+    layouts = {
+        1: [(1, 1)],
+        2: [(2, 1), (1, 2)],
+        4: [(4, 1), (2, 2), (1, 4)],
+        6: [(6, 1), (3, 2), (2, 3), (1, 6)],
+        8: [(8, 1), (4, 2), (2, 4), (1, 8)],
+    }[tiles]
+
+    def _tile_size(layout):
+        cols, rows = layout
+        tile_w = math.ceil((clip_w + 2 * overlap * (cols - 1)) / cols)
+        tile_h = math.ceil((clip_h + 2 * overlap * (rows - 1)) / rows)
+        return tile_w + tile_w % 2, tile_h + tile_h % 2  # must be even
+
+    def _layout_valid(layout):
+        # tiles must have a positive non overlapped stride
+        cols, rows = layout
+        tile_w, tile_h = _tile_size(layout)
+        if cols > 1 and tile_w <= 2 * overlap:
+            return False
+        if rows > 1 and tile_h <= 2 * overlap:
+            return False
+        return True
+
+    def _score(layout):
+        tile_w, tile_h = _tile_size(layout)
+        cols, rows = layout
+
+        tile_aspect = tile_w / tile_h
+        square_error = abs(math.log(tile_aspect))
+
+        orientation_penalty = rows if clip_w >= clip_h else cols
+        balance_penalty = abs(cols - rows)
+
+        return (square_error, orientation_penalty, balance_penalty)
+
+    valid_layouts = [layout for layout in layouts if _layout_valid(layout)]
+    if not valid_layouts:
+        raise ValueError("vs_temporalfix: Clip dimensions are too small for current tile amount. Reduce tiles.")
+
+    cols, rows = min(valid_layouts, key=_score)
+    tile_w, tile_h = _tile_size((cols, rows))
+    if tile_w > 2.5 * tile_h or tile_h > 2.5 * tile_w:  # allow ultrawide
+        raise ValueError("vs_temporalfix: The current tile amount produces tiles that are too elongated. Try a different tile amount.")
+    
+    return tile_w, tile_h, cols, rows
+
+
+def interpolate_onnx(onnx_path_lower, onnx_path_upper, save_path=None, weighting=0.5):
+    # interpolate two onnx models
+    import onnx
+    import numpy as np
+    from onnx import TensorProto, numpy_helper
+
+    float_types = {TensorProto.FLOAT, TensorProto.FLOAT16, TensorProto.DOUBLE}
+    model_lower = onnx.load(onnx_path_lower)
+    model_upper = onnx.load(onnx_path_upper)
+    init_upper  = {init.name: init for init in model_upper.graph.initializer}
+
+    for i, init_lower in enumerate(model_lower.graph.initializer):
+        if init_lower.data_type in float_types:
+            array_lower = numpy_helper.to_array(init_lower)
+            array_upper = numpy_helper.to_array(init_upper[init_lower.name])
+            array_lerp  = (array_lower.astype(np.float32) * (1.0 - weighting) + array_upper.astype(np.float32) * weighting).astype(array_lower.dtype, copy=False)
+            model_lower.graph.initializer[i].CopyFrom(numpy_helper.from_array(array_lerp, name=init_lower.name))
+
+    if save_path is not None:
+        onnx.save_model(model_lower, save_path)
+    return model_lower
+
+
+def split_gridsample(onnx_model):
+    # split gridsample from batch 6 into 6 batch 1 calls
+    from onnx import helper
+
+    target_name = "/aligner/GridSample_2"
+    parts       = 6
+    nodes       = list(onnx_model.graph.node)
+    node_idx    = next((i for i, node in enumerate(nodes) if node.name == target_name), -1)
+    if node_idx < 0:
+        raise RuntimeError(f"vs_temporalfix: Internal Error: Could not find node {target_name!r}.")
+
+    node         = nodes[node_idx]
+    input_parts  = [f"{target_name}/dml_input_batch_{i}" for i in range(parts)]
+    grid_parts   = [f"{target_name}/dml_grid_batch_{i}" for i in range(parts)]
+    output_parts = [f"{target_name}/dml_output_batch_{i}" for i in range(parts)]
+    replacement  = [
+        helper.make_node("Split", [node.input[0]], input_parts, name=f"{target_name}/DMLSplitInputBatch", axis=0, num_outputs=parts),
+        helper.make_node("Split", [node.input[1]], grid_parts, name=f"{target_name}/DMLSplitGridBatch", axis=0, num_outputs=parts),
+        *(helper.make_node("GridSample", [input_parts[i], grid_parts[i]], [output_parts[i]], name=f"{target_name}/DMLBatch_{i}", align_corners=0, mode="bilinear", padding_mode="zeros") for i in range(parts)),
+        helper.make_node("Concat", output_parts, [node.output[0]], name=f"{target_name}/DMLConcatBatch", axis=0),
+    ]
+
+    nodes[node_idx:node_idx + 1] = replacement
+    del onnx_model.graph.node[:]
+    onnx_model.graph.node.extend(nodes)
+    return onnx_model

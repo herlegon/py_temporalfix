@@ -15,19 +15,14 @@ import denc
 from denc import (
     MediaStream,
     dlogger,
-    DecoderThread,
-    EncoderThread,
     ProgressThread,
-    Device,
-    VideoStream,
     PixFmt,
     PIXEL_FORMATS,
     PipeFormat,
     generate_encoder_command,
 )
-import torch
 from arg_parse import arg_parse
-from hytils import lightcyan, lightgreen, red, yellow
+from hytils import lightcyan, lightgreen, red
 
 from vs.vsscript import extract_info_from_vs_script
 
@@ -38,7 +33,8 @@ def main():
     dlogger.setLevel(logging.INFO)
 
     # Verify the installation
-    vspipe_exe: Path = __file_dir__ / "external" / "vspython" / "VSPipe.exe"
+    vspipe_exe: Path = __file_dir__ / "external" / "vspython" / "lib" / "site-packages" / "vapoursynth" / "VSPipe.exe"
+
     if sys.platform == "linux":
         vs_env_dir: Path = Path(os.environ.get("VS_ENV_DIR", Path.home() / "vs-env")).expanduser()
         vspipe_exe = vs_env_dir / "bin" / "vspipe"
@@ -236,6 +232,7 @@ Please install these dependencies (refer to the documentation).
     dlogger.debug(lightcyan("Encoder command:"))
     dlogger.debug(lightgreen(' '.join(encoder_command)))
 
+    # Run
     vs_subprocess.stdout.close()
 
     frame_count = in_media.video.frame_count
@@ -244,20 +241,13 @@ Please install these dependencies (refer to the documentation).
     try:
         encoder_stdout: list[str] = encoder_subprocess.stdout
         last: int = 0
-        if True:
-            # key=value from -progress pipe:1
-            for line in encoder_stdout:
-                key, _, value = line.strip().partition("=")
-                if key == "frame" and value.isdigit():
-                    n = int(value)
-                    progress.put(n - last)
-                    last = n
-        else:
-            # debug
-            start_time: float = time.perf_counter()
-            for line in encoder_stdout:
-                elapsed: float = time.perf_counter() - start_time
-                print(f"{elapsed:6.2f}s  {line.strip()}", file=sys.stderr)
+        # key=value from -progress pipe:1
+        for line in encoder_stdout:
+            key, _, value = line.strip().partition("=")
+            if key == "frame" and value.isdigit():
+                n = int(value)
+                progress.put(n - last)
+                last = n
 
         progress.put(0, force=True)
         progress.put(None)
@@ -266,7 +256,7 @@ Please install these dependencies (refer to the documentation).
         vs_return_code = vs_subprocess.wait()
         vs_errors: str = vs_subprocess.stderr.read().decode("utf-8", "replace")
         if vs_return_code != 0:
-            dlogger.critical(red(f"VSPipe a échoué ({vs_return_code}):\n{vs_errors}"))
+            dlogger.critical(red(f"VSPipe failed: ({vs_return_code}):\n{vs_errors}"))
 
     except BaseException:
         progress.stop(force=True)
@@ -276,55 +266,11 @@ Please install these dependencies (refer to the documentation).
         raise
 
     finally:
-        progress.join(timeout=2)
+        progress.join(timeout=10)
 
     if encoder_return_code != 0 or vs_return_code != 0:
-        dlogger.critical(red(f"Échec : ffmpeg={encoder_return_code}, VSPipe={vs_return_code}"))
+        dlogger.critical(red(f"Error: ffmpeg={encoder_return_code}, VSPipe={vs_return_code}"))
 
-
-
-    # os.set_blocking(encoder_subprocess.stdout.fileno(), False)
-    # os.set_blocking(vs_subprocess.stderr.fileno(), False)
-    # dlogger.debug(lightgreen(f"nbytes={nbytes}"))
-    # dlogger.info(f"Processing:")
-    # try:
-    #     for i in range(frame_count):
-    #         print(f"reading frame no. {i}", end="\r")
-    #         frame: bytes = vs_subprocess.stdout.read(nbytes)
-    #         if frame is None:
-    #             dlogger.critical(red("Frame is none"))
-    #         encoder_subprocess.stdin.write(frame)
-
-    #         line = encoder_subprocess.stdout.readline().decode('utf-8')
-    #         if line:
-    #             print(line.strip(), end='\r', file=sys.stderr)
-
-    #         line = vs_subprocess.stderr.readline().decode('utf-8')
-    #         if line:
-    #             print(line.strip(), end='\r', file=sys.stderr)
-    #     print()
-    # except:
-    #     pass
-
-    # dlogger.info(f"Wait for the end...")
-    # stdout_b: bytes | None = None
-    # stderr_b: bytes | None = None
-    # try:
-    #     # Arbitrary timeout value
-    #     stdout_b, stderr_b = encoder_subprocess.communicate(timeout=10)
-    # except:
-    #     encoder_subprocess.kill()
-    #     return
-
-    # if stdout_b is not None:
-    #     stdout = stdout_b.decode('utf-8)')
-    #     if stdout:
-    #         dlogger.debug(f"FFmpeg stdout:\n{stdout}")
-
-    # if stderr_b is not None:
-    #     stderr = stderr_b.decode('utf-8)')
-    #     if stderr:
-    #         dlogger.debug(f"FFmpeg stderr:\n{stderr}")
 
 
 

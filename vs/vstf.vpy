@@ -14,14 +14,9 @@ if sys.platform == "win32":
 import vapoursynth as vs
 core = vs.core
 core.num_threads = int(cpu_count() - 2)
-core.max_cache_size = 20000
 
 input_fp: str
 clip = core.bs.VideoSource(source=input_fp.replace("\"", ""), cachemode = 0)
-# clip = clip.std.SetFrameProps(_Matrix=vs.MATRIX_BT709)
-# clip = clip.std.SetFrameProps(_Primaries=vs.MATRIX_BT709)
-# clip = clip.std.SetFrameProps(_ChromaLocation=vs.MATRIX_BT709)
-# clip = clip.std.SetFrameProps(_ColorRange=vs.RANGE_FULL)
 
 strength: int
 tr: int
@@ -46,3 +41,4 @@ elif out_pix_fmt == 'yuv420p' and clip.format != vs.YUV420P8:
     clip = core.resize.Bicubic(clip, format=vs.YUV420P8, matrix_in_s="709")
 
 clip.set_output()
+
