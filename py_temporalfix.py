@@ -195,7 +195,7 @@ Please install these dependencies (refer to the documentation).
     # if debug:
     #     extract_info_from_vs_script(vs_command=vs_command, vs_env=vs_env)
 
-    encoder_command: list[str] = generate_encoder_command(media=out_media)
+    encoder_command: list[str] = generate_encoder_command(media=out_media, progress=True)
     parent_dir: str = out_media.video.filepath.parent
     if parent_dir:
         os.makedirs(parent_dir, exist_ok=True)
@@ -207,7 +207,7 @@ Please install these dependencies (refer to the documentation).
             vs_command,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
-            stderr=None,
+            stderr=subprocess.PIPE,
             env=vs_env,
         )
     except Exception as e:
@@ -233,43 +233,53 @@ Please install these dependencies (refer to the documentation).
         dlogger.critical(red(f"[E] Encoder process is not started"))
         sys.exit()
 
-
     dlogger.debug(lightcyan("Encoder command:"))
     dlogger.debug(lightgreen(' '.join(encoder_command)))
 
-    frame_count: int = in_media.video.frame_count
-    nbytes: int = out_media.video.pipe_format.nbytes
-    frame: bytes = None
-    line: str = ''
-
-
     vs_subprocess.stdout.close()
+
     frame_count = in_media.video.frame_count
-    t0 = last_t = time.perf_counter()
-    last_n = 0
+    progress = ProgressThread(total=frame_count)
+    progress.start()
     try:
-        for line in encoder_subprocess.stdout:        # se termine à l'EOF
-            key, _, value = line.strip().partition("=")
-            if key == "frame" and value.isdigit():
-                done = int(value)
-                now = time.perf_counter()
-                if now - last_t >= 1.0:
-                    inst_fps = (done - last_n) / (now - last_t)
-                    last_n, last_t = done, now
-                    eta = (frame_count - done) / inst_fps if inst_fps > 0 else 0.0
-                    print(f"{done}/{frame_count}  {inst_fps:6.2f} fps  ETA {eta:5.0f}s",
-                        end="\r", file=sys.stdout)
-        print()
-        rc_enc = encoder_subprocess.wait()
-        rc_vs = vs_subprocess.wait()
+        encoder_stdout: list[str] = encoder_subprocess.stdout
+        last: int = 0
+        if True:
+            # key=value from -progress pipe:1
+            for line in encoder_stdout:
+                key, _, value = line.strip().partition("=")
+                if key == "frame" and value.isdigit():
+                    n = int(value)
+                    progress.put(n - last)
+                    last = n
+        else:
+            # debug
+            start_time: float = time.perf_counter()
+            for line in encoder_stdout:
+                elapsed: float = time.perf_counter() - start_time
+                print(f"{elapsed:6.2f}s  {line.strip()}", file=sys.stderr)
+
+        progress.put(0, force=True)
+        progress.put(None)
+        encoder_return_code = encoder_subprocess.wait()
+
+        vs_return_code = vs_subprocess.wait()
+        vs_errors: str = vs_subprocess.stderr.read().decode("utf-8", "replace")
+        if vs_return_code != 0:
+            dlogger.critical(red(f"VSPipe a échoué ({vs_return_code}):\n{vs_errors}"))
+
     except BaseException:
+        progress.stop(force=True)
         for p in (vs_subprocess, encoder_subprocess):
             if p.poll() is None:
                 p.kill()
         raise
 
-    if rc_enc != 0 or rc_vs != 0:
-        dlogger.critical(red(f"Échec : ffmpeg={rc_enc}, VSPipe={rc_vs}"))
+    finally:
+        progress.join(timeout=2)
+
+    if encoder_return_code != 0 or vs_return_code != 0:
+        dlogger.critical(red(f"Échec : ffmpeg={encoder_return_code}, VSPipe={vs_return_code}"))
 
 
 
