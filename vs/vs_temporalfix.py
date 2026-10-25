@@ -15,7 +15,6 @@ from utils import (
     average_color_fix_fast,
     tweak_darks,
     contrasharp,
-    exclude_regions,
     lowfreq_denoise,
 )
 
@@ -249,8 +248,6 @@ def vs_temporalfix(clip: vs.VideoNode, strength: int = 500, tr: int = 6, denoise
     if debug:
         ref_debug = core.std.Levels(ref, gamma=2)  # visualize unfixed areas
         clip = core.std.MaskedMerge(clip, ref_debug, motionmask)
-        clip = exclude_regions(clip, ref_debug, exclude=exclude)  # if debug, do exclude here with ref, so that the replacement is still in yuv
-
 
     ##### finalize output #####
 
@@ -258,7 +255,4 @@ def vs_temporalfix(clip: vs.VideoNode, strength: int = 500, tr: int = 6, denoise
     if orig_format != proc_format or orig_range != 1:
         clip = core.resize.Point(clip, format=orig_format, range=orig_range, dither_type="error_diffusion")
 
-    # exclude regions from temporal fixing
-    if debug:  # if debug, already excluded in yuv space for better gamma visualization
-        return clip
-    return exclude_regions(clip, orig_clip, exclude=exclude)
+    return clip
