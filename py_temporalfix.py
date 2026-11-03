@@ -1,4 +1,4 @@
-from argparse import Namespace
+from argparse import ArgumentParser, Namespace, RawTextHelpFormatter
 import logging
 import os
 from pathlib import Path
@@ -20,6 +20,11 @@ from denc import (
     PIXEL_FORMATS,
     PipeFormat,
     generate_encoder_command,
+    generate_output_filepath,
+    BoundedInteger,
+    add_io_arguments,
+    add_seek_arguments,
+    add_debug_arguments,
 )
 from arg_parse import arg_parse
 from hytils import lightcyan, lightgreen, red
@@ -46,7 +51,40 @@ Please install these dependencies (refer to the documentation).
         """))
 
     # Parse arguments
-    args: Namespace = arg_parse()
+    parser = ArgumentParser(
+        description="Python wrapper for vs_temporalfix script",
+        formatter_class=RawTextHelpFormatter
+    )
+    add_io_arguments(parser)
+
+    parser.add_argument(
+        "-tr",
+        "--t_radius",
+        type=BoundedInteger(1, 10),
+        metavar="[1..10]",
+        default=6,
+        required=False,
+        help="""Temporal radius sets the number of frames to average over. Higher means more stable.
+If you get blending/ghosting on small movements or blocky artifacts, reduce this.
+\n"""
+    )
+
+    parser.add_argument(
+        "-s",
+        "--strength",
+        type=BoundedInteger(1, 800),
+        metavar="[1..800]",
+        default=400,
+        required=False,
+        help="""Suppression strength of temporal inconsistencies.
+Higher means more aggressive.
+\n"""
+    )
+
+    add_seek_arguments(parser)
+    add_debug_arguments(parser)
+    args: Namespace = parser.parse_args()
+
     debug: bool = args.debug
     if debug:
         dlogger.setLevel(logging.DEBUG)
@@ -64,26 +102,12 @@ Please install these dependencies (refer to the documentation).
     strength: float = args.strength
 
     # Output file
-    #   priority: `output` -> `out_dir` -> none
-    output: str = args.output
-    out_dir: str = args.out_dir
-    append_params: bool = args.append_params
-    if output:
-        output_fp: Path = Path(output).resolve()
-    elif out_dir:
-        output_fp: Path = Path(out_dir).resolve() / in_fp.name
-    else:
-        output_fp: Path = in_fp.parent / f"{in_fp.stem}_radius_{t_radius}_strength_{strength}{in_fp.suffix}"
-        append_params = False
+    output_fp = generate_output_filepath(
+        args=args,
+        suffix=f"_radius_{t_radius}_strength_{strength}"
+    )
 
-    if append_params:
-        output_fp: Path = output_fp.parent / f"{output_fp.stem}_radius_{t_radius}_strength_{strength}{output_fp.suffix}"
-
-    if output_fp == in_fp:
-        dlogger.error(red(f"Error: Output file must not be the input file"))
-        sys.exit()
-    dlogger.info(f"{lightcyan(f"Output file:")} {output_fp}")
-
+    # Output media
     out_media = in_media.to_output(filepath=output_fp)
     out_media.video.metadata.update({
         'py_temporalfix': f"tr={t_radius}, strength={strength}"
