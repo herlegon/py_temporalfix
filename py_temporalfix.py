@@ -26,7 +26,6 @@ from denc import (
     add_seek_arguments,
     add_debug_arguments,
 )
-from arg_parse import arg_parse
 from hytils import lightcyan, lightgreen, red
 
 from vs.vsscript import extract_info_from_vs_script

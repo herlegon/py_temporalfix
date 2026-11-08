@@ -36,6 +36,9 @@
         "../hsys",
         "../hinstall",
         "../denc",
+        "../nnarchs",
+        "../gpu_algos",
+        "../heron",
     ],
     "python.analysis.typeCheckingMode": "basic",
     "python.analysis.diagnosticSeverityOverrides": {
@@ -44,5 +47,12 @@
         "reportOptionalMemberAccess": "none",
         "reportCallIssue": "none",
         "reportAttributeAccessIssue": "none",
-    }
+    },
+    "python-envs.pythonProjects": [
+        {
+            "path": ".",
+            "envManager": "ms-python.python:conda",
+            "packageManager": "ms-python.python:conda"
+        }
+    ]
 }

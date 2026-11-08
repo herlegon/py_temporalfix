@@ -3,3 +3,5 @@ git+https://github.com/herlegon/hytils.git
 git+https://github.com/herlegon/hsys.git
 git+https://github.com/herlegon/hinstall.git
 git+https://github.com/herlegon/denc.git
+git+https://github.com/herlegon/gpu-algos.git
+git+https://github.com/herlegon/nnarchs.git

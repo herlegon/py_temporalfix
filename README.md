@@ -6,27 +6,17 @@ _This project is experimental_
 ## Table of Contents
 - [Basic usage](#Basic-usage)
 - [Installation](#Installation)
-- [Usage](#Usage)
-- [Troubleshooting](#Troubleshooting)
+- [TemporalFix Classic](#TemporalFix-Classic)
+- [TemporalFix AI](#TemporalFix-AI)
 
 &nbsp;
 
 
-## Basic usage
-```bash
-python py_temporalfix.py --input input_video.mkv --output output_video.mkv --t_radius 6 --strength 300
-```
-
-&nbsp;
-
-_Note: The output path is optional. If omitted, a suffix will automatically be appended to the input filename._
-
-&nbsp;
 
 ## Installation
 - **Requirements:** Windows 11 and Python 3.14
 > [!TIP]
-> Using [Miniconda](https://docs.anaconda.com/free/miniconda/index.html) is recommended to create an isolated Python environment rather than using your system-wide Python installation.
+> Using [Miniconda](https://docs.anaconda.com/free/miniconda/index.html) is recommended to create an isolated Python environment rather than using your system-wide Python installation. Moreover, this environment can be used regardless of the application developed by Herlegon.
 
 - (Optional) **Create a conda environment**
     ```bash
@@ -48,11 +38,19 @@ Alternatively, download and extract the repository as a ZIP archive.
 
 &nbsp;
 
-## Usage
+## TemporalFix Classic
 
+### Basic usage
 ```bash
-python py_temporalfix.py --help
+python py_temporalfix.py --input input_video.mkv --output output_video.mkv --t_radius 6 --strength 300
 ```
+
+&nbsp;
+
+_Note: The output path is optional. If omitted, a suffix will automatically be appended to the input filename._
+
+&nbsp;
+
 
 ### Input, output
 | Option&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;| Description |
@@ -62,7 +60,7 @@ python py_temporalfix.py --help
 | `--suffix`| Suffix to append to the output filename when `--output` is not specified. Defaults to `_<t_radius>_<strength>`)|
 
 
-### Parameters Passed to TemporalFix Classic
+### Parameters passed to TemporalFix Classic
 For more details: ["TemporalFix Classic"](https://github.com/pifroggi/vs_temporalfix#temporalfix-classic)
 
 | Option&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; |  Default | Description |
@@ -83,6 +81,40 @@ Add `--log` to the command line to enable diagnostic output. The script will:
 &nbsp;
 
 
+## TemporalFix AI
+
+### Basic usage
+```bash
+python py_temporalfix.py --input input_video.mkv --output output_video.mkv --strength 2
+```
+
+&nbsp;
+
+_Note: The output path is optional. If omitted, a suffix will automatically be appended to the input filename._
+
+&nbsp;
+
+### Input, output
+| Option&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;| Description |
+| :--- | :--- |
+| `--input` | Path to the input video file. |
+| `--output`| Path to the output video file. |
+| `--suffix`| Suffix to append to the output filename when `--output` is not specified. Defaults to `_strength_<strength>`|
+
+### Parameters passed to TemporalFix AI
+For more details: ["TemporalFix AI Model"](https://github.com/pifroggi/vs_temporalfix#temporalfix-ai-model)
+
+| Option&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; |  Default | Description |
+| :--- | :---: | :--- |
+| `--strength` | `2` | Suppression strength of temporal inconsistencies in the 0.0-3.0 range. Higher means more aggressive.
+Higher resolution tends to need higher strength. Too high may oversmooth small movements.. |
+
+
+&nbsp;
+&nbsp;
+&nbsp;
+&nbsp;
+&nbsp;
 ## Not yet supported:
 
 
