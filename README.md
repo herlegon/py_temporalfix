@@ -14,6 +14,9 @@ _This project is experimental_
 
 
 ## Installation
+
+_Note: The current installation script will install all packages for both classic and AI version: vspython, torch, onnx, tensorRT if supported_
+
 - **Requirements:** Windows 11 and Python 3.14
 > [!TIP]
 > Using [Miniconda](https://docs.anaconda.com/free/miniconda/index.html) is recommended to create an isolated Python environment rather than using your system-wide Python installation. Moreover, this environment can be used regardless of the application developed by Herlegon.
@@ -32,7 +35,6 @@ Alternatively, download and extract the repository as a ZIP archive.
 - **Install dependencies and external tools**
   Install the required Python packages and download a portable VapourShit Python environment (`vspython`) to the `external` directory:
     ```bash
-    pip install -r requirements.txt
     python install.py
     ```
 
