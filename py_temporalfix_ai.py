@@ -185,6 +185,9 @@ Higher resolution tends to need higher strength. Too high may oversmooth small m
     elif args.bf16:
         infer_dtype = 'bf16'
 
+    dlogger.info(blue(f"  device: ") + f"{device}")
+    dlogger.info(blue(f"  datatype: ") + f"{infer_dtype}")
+
     # Chain
     #-------------------------------------------------------------------------------------
     in_sf: VideoStreamFormat = in_media.video.stream_format()
@@ -201,7 +204,7 @@ Higher resolution tends to need higher strength. Too high may oversmooth small m
     infer_thread = CudaTemporalInferenceThread(name=model.arch.name, debug=debug)
     infer_thread.initialize(
             model=model,
-            device="cuda:0",
+            device=device,
             dtype=infer_dtype,
             prescale=None
         )

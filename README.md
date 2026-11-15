@@ -8,6 +8,7 @@ _This project is experimental_
 - [Installation](#Installation)
 - [TemporalFix Classic](#TemporalFix-Classic)
 - [TemporalFix AI](#TemporalFix-AI)
+- [Performances](#Performances)
 
 &nbsp;
 
@@ -110,6 +111,30 @@ For more details: ["TemporalFix AI Model"](https://github.com/pifroggi/vs_tempor
 | :--- | :---: | :--- |
 | `--strength` | `2` | Suppression strength of temporal inconsistencies in the 0.0-3.0 range. Higher means more aggressive.
 Higher resolution tends to need higher strength. Too high may oversmooth small movements.. |
+
+
+## Performances
+
+i5-12600k, 32GB RAM, RTX4080
+500 frames
+
+Type     | Resolution   | Codec | Pixel Format  | FPS |
+| :--- | :---: | ---: | ---: | ---: |
+classic  | 1440x1080    | H265  | yuv422p10     | ~14 fps   |
+classic  | 1440x1080    | DNxHR | yuv422p10     | ~15.5 fps |
+
+Type     | Datatype | Resolution   | Codec | Pixel Format  | FPS       | VRAM (peak)  |
+| :--- | :---: | :---: | ---: | ---: | ---: | ---: |
+AI (CUDA)| fp32 | 1440x1080    | H265  | yuv422p10     | ~23.5 fps | 3.0 GB  |
+AI (CUDA)| fp32 | 1440x1080    | DNxHR | yuv422p10     | ~23.8 fps | 3.3 GB  |
+
+Improved module
+Type     | Datatype | Resolution   | Codec | Pixel Format  | FPS       | VRAM (peak)  |
+| :--- | :---: | :---: | ---: | ---: | ---: | ---: |
+AI (CUDA)| fp32 | 1440x1080    | H265  | yuv422p10     | ~28.8 fps | 3.2 GB  |
+AI (CUDA)| fp16 | 1440x1080    | H265  | yuv422p10     | ~37.5 fps | 2.2 GB  |
+AI (CUDA)| fp32 | 1440x1080    | DNxHR | yuv422p10     | ~29.0 fps | 3.2 GB  |
+AI (CUDA)| fp16 | 1440x1080    | DNxHR | yuv422p10     | ~36.8 fps | 2.2 GB  |
 
 
 &nbsp;

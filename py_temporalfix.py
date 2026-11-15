@@ -219,6 +219,9 @@ Higher means more aggressive.
     if parent_dir:
         os.makedirs(parent_dir, exist_ok=True)
 
+    start = time.perf_counter()
+    elapsed = 0.0
+
     # Vs process
     vs_subprocess: subprocess.Popen = None
     try:
@@ -290,6 +293,10 @@ Higher means more aggressive.
 
     finally:
         progress.join(timeout=10)
+
+    elapsed = time.perf_counter() - start
+    total_frames = in_media.video.frame_count
+    print(f"elapsed: {elapsed:.02f}s ({total_frames/elapsed:.02f}fps)")
 
     if encoder_return_code != 0 or vs_return_code != 0:
         dlogger.critical(red(f"Error: ffmpeg={encoder_return_code}, VSPipe={vs_return_code}"))

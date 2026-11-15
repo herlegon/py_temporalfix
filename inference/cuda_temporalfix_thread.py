@@ -41,8 +41,10 @@ class TemporalFrameCacheMirroring:
         self.window_size: int = window_size
         self.radius: int = window_size // 2
         self.frames: list[NnFrame] = []
-        self.tensors: list[Tensor] = []
-        self.tail: list[Tensor] = []   # padding miroir de fin
+        self.tensors: list[Tensor] = []        # each item: (1,3,H,W), chronological order
+        self.feats: list[Tensor] = []          # each item: (1,4,H,W), parallel to self.tensors
+        self.tail: list[Tensor] = []           # end-of-clip mirror padding (images)
+        self.feat_tail: list[Tensor] = []      # end-of-clip mirror padding (features)
         self.pad_i: int = 0
         self.state: _CACHE_STATE = _CACHE_STATE.INIT
 
@@ -50,7 +52,9 @@ class TemporalFrameCacheMirroring:
     def reset(self) -> None:
         self.frames.clear()
         self.tensors.clear()
+        self.feats.clear()
         self.tail.clear()
+        self.feat_tail.clear()
         self.pad_i = 0
         self.state = _CACHE_STATE.INIT
 
@@ -68,31 +72,44 @@ class TemporalFrameCacheMirroring:
 
 
     def _enter_emptying(self) -> None:
-        # tensors contient 7 éléments, la dernière frame du clip est en [-1]
-        # padding miroir : f(N-2), f(N-3), f(N-4)
+        # tensors holds 7 items, the last frame of the clip is at [-1]
+        # mirror padding: f(N-2), f(N-3), f(N-4)
+        # Features are shared with the images: a mirrored frame reuses the same
+        # feature tensor (the encoder is per-frame, so no re-encoding is needed).
         self.tail = [self.tensors[-(k + 1)] for k in range(1, self.radius + 1)]
+        self.feat_tail = [self.feats[-(k + 1)] for k in range(1, self.radius + 1)]
         self.pad_i = 0
         self.state = _CACHE_STATE.EMPTYING
 
 
-    def append(self, frame: NnFrame | None) -> None:
+    def append(self, frame: NnFrame | None, feat: Tensor | None = None) -> None:
+        """
+        frame: incoming frame, frame.tensor is (1,3,H,W)
+        feat:  encoder features of frame.tensor, (1,4,H,W), computed once by the
+               caller (nn_module.encode_frame). Required when frame is not None.
+        """
         if frame is None:
             return
+        if feat is None:
+            raise ValueError("cache: append() needs the frame features")
 
         if self.state == _CACHE_STATE.INIT:
             self.tensors = [frame.tensor]
+            self.feats = [feat]
             self.frames = [frame]
             self.state = _CACHE_STATE.WAIT_FRAMES
 
         elif self.state == _CACHE_STATE.WAIT_FRAMES:
             self.tensors.append(frame.tensor)
+            self.feats.append(feat)
             self.frames.append(frame)
             # dlogger.debug(f"cache frame no: " + ", ".join(str(f.f_no) for f in self.frames))
 
             if len(self.frames) == self.radius + 1:
                 # [f0 f1 f2 f3] -> [f3 f2 f1 f0 f1 f2 f3]
-                prefix = self.tensors[self.radius:0:-1]
-                self.tensors = prefix + self.tensors
+                # Same mirroring for images and features
+                self.tensors = self.tensors[self.radius:0:-1] + self.tensors
+                self.feats = self.feats[self.radius:0:-1] + self.feats
                 if frame.last:          # N == radius + 1
                     self._enter_emptying()
                 else:
@@ -102,6 +119,7 @@ class TemporalFrameCacheMirroring:
             if len(self.tensors) >= self.window_size:
                 raise ValueError("too many tensors")
             self.tensors.append(frame.tensor)
+            self.feats.append(feat)
             self.frames.append(frame)
             if frame.last:
                 self._enter_emptying()
@@ -110,25 +128,46 @@ class TemporalFrameCacheMirroring:
             raise ValueError(red("cache: append while not ready to receive"))
 
 
-    def get_window(self) -> list[Tensor] | None:
+    def _fill_tail_padding(self) -> None:
+        # Complete the window with end-of-clip mirror padding (images + features)
+        while len(self.tensors) < self.window_size:
+            self.tensors.append(self.tail[self.pad_i])
+            self.feats.append(self.feat_tail[self.pad_i])
+            self.pad_i += 1
+
+
+    def get_window(self) -> tuple[Tensor, Tensor] | None:
+        """
+        Returns (x, feats) ready for the network, or None if not ready:
+          x:     (1,7,3,H,W)
+          feats: (1,7,4,H,W)
+        Order is [0, -3, -2, -1, +1, +2, +3] (center first).
+        """
         if self.state == _CACHE_STATE.PROCESSING:
             # dlogger.debug(f"generated a window with frame no: " + ", ".join(str(f.f_no) for f in self.frames))
-            return self.tensors
+            pass
+        elif self.state == _CACHE_STATE.EMPTYING:
+            self._fill_tail_padding()
+        else:
+            return None
 
-        if self.state == _CACHE_STATE.EMPTYING:
-            while len(self.tensors) < self.window_size:
-                self.tensors.append(self.tail[self.pad_i])
-                self.pad_i += 1
-            return self.tensors
+        c = self.radius  # center index in chronological order (3 for a 7 window)
 
-        return None
+        # Chronological [-3,-2,-1,0,+1,+2,+3] -> center first [0,-3,-2,-1,+1,+2,+3]
+        t = self.tensors
+        f = self.feats
+        x = torch.cat([t[c], *t[:c], *t[c + 1:]], dim=0).unsqueeze(0)
+        feats = torch.cat([f[c], *f[:c], *f[c + 1:]], dim=0).unsqueeze(0)
+        return x, feats
 
 
     def current_frame(self) -> NnFrame | None:
         if self.state in (_CACHE_STATE.PROCESSING, _CACHE_STATE.EMPTYING):
             frame: NnFrame = self.frames.pop(0)
             frame.tensor = None
+            # Drop the oldest image/feature references so the GPU memory can be reused
             self.tensors.pop(0)
+            self.feats.pop(0)
             if len(self.frames) == 0:
                 self.state = _CACHE_STATE.EMPTY
             return frame
@@ -226,7 +265,14 @@ class CudaTemporalInferenceThread(BaseThread):
                     frame.tensor = in_tensor.contiguous()
                     if verbose:
                         dlogger.debug(f"cache {frame.f_no}: {in_tensor.data_ptr()}")
-                    cache.append(frame=frame)
+
+                    # Encode the incoming frame exactly once (1 frame instead of 7 per step).
+                    # The features stay on the GPU, on the same stream.
+                    in_feat = nn_module.encode_frame(frame.tensor)
+
+                    # CHANGED: the cache now stores the features next to the image
+                    cache.append(frame=frame, feat=in_feat)
+
 
                 # elif verbose:
                 #     dlogger.debug(blue(f"[V][I][CUDA] emptying"))
@@ -240,41 +286,25 @@ class CudaTemporalInferenceThread(BaseThread):
 
                 # Cache is ready, perform inference
                 window = cache.get_window()
-                if verbose:
-                    dlogger.debug(f"   window: {[t.data_ptr() for t in window]}")
                 if window is None:
                     raise ValueError("Not enough frames in window, why?")
+                in_tensors, in_feats = window   # (1,7,3,H,W), (1,7,4,H,W)
+                if verbose:
+                    dlogger.debug(f"   window: {in_tensors.data_ptr()}, feats: {in_feats.data_ptr()}")
+
 
                 # inference
                 #-----------------------------------------------------------------------------
-                if False:
-                    # Debug
-                    # out_tensor = (
-                    #     window[0] * 0.25
-                    #     + window[1] * 0.5
-                    #     + window[2] * 0.75
-                    #     + window[3]
-                    #     + window[4] * 0.75
-                    #     + window[5] * 0.5
-                    #     + window[6] * 0.25
-                    # ) / 4
-                    out_tensor = window[3]
-                else:
-                    in_tensors = torch.cat(window, dim=0).unsqueeze(0)
-                    out_tensor = nn_module(in_tensors)
+                out_tensor = nn_module(in_tensors, feats=in_feats)
 
                 out_tensor = torch.clamp_(out_tensor, 0., 1.)
                 out_frame = cache.current_frame()
                 out_frame.tensor = out_tensor
-                # dlogger.debug(f"encode {out_frame.f_no}")
 
                 mark_frame_ready(frame=out_frame, stream=cuda_stream)
                 if verbose:
                     dlogger.debug(blue(f"{verbose_prefix} send to encoder: {out_tensor.shape}, {out_tensor.dtype}, {out_tensor.data_ptr()}"))
                 self.consumer.put_frame(out_frame)
-
-                # Write (debug)
-                # write_tensor(f"frame_{out_frame.f_no:02}.png", d_tensor=out_tensor)
 
                 if cache.is_empty():
                     dlogger.debug(blue(f"[V][I][CUDA] cache is empty, break"))
