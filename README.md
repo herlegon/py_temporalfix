@@ -1,5 +1,5 @@
 # py_temporalfix
-A Python wrapper for running the ["TemporalFix Classic"](https://github.com/pifroggi/vs_temporalfix#temporalfix-classic) script developed by [pifroggi](https://github.com/pifroggi).
+A Python wrapper for running the ["TemporalFix"](https://github.com/pifroggi/vs_temporalfix) developed by [pifroggi](https://github.com/pifroggi).
 _This project is experimental_
 &nbsp;
 
