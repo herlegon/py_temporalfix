@@ -124,12 +124,13 @@ Type     | Resolution   | Codec | Pixel Format  | FPS |
 classic  | 1440x1080    | H265  | yuv422p10     | ~14 fps   |
 classic  | 1440x1080    | DNxHR | yuv422p10     | ~15.5 fps |
 
+Original version
 Type     | Datatype | Resolution   | Codec | Pixel Format  | FPS       | VRAM (peak)  |
 | :--- | :---: | :---: | ---: | ---: | ---: | ---: |
 AI (CUDA)| fp32 | 1440x1080    | H265  | yuv422p10     | ~23.5 fps | 3.0 GB  |
 AI (CUDA)| fp32 | 1440x1080    | DNxHR | yuv422p10     | ~23.8 fps | 3.3 GB  |
 
-Improved module
+**Integrated improved version**
 Type     | Datatype | Resolution   | Codec | Pixel Format  | FPS       | VRAM (peak)  |
 | :--- | :---: | :---: | ---: | ---: | ---: | ---: |
 AI (CUDA)| fp32 | 1440x1080    | H265  | yuv422p10     | ~28.8 fps | 3.2 GB  |
