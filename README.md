@@ -9,6 +9,7 @@ _This project is experimental_
 - [TemporalFix Classic](#TemporalFix-Classic)
 - [TemporalFix AI](#TemporalFix-AI)
 - [Performances](#Performances)
+- [Limitations](#Limitations)
 
 &nbsp;
 
@@ -136,6 +137,15 @@ AI (CUDA)| fp16 | 1440x1080    | H265  | yuv422p10     | ~37.5 fps | 2.2 GB  |
 AI (CUDA)| fp32 | 1440x1080    | DNxHR | yuv422p10     | ~29.0 fps | 3.2 GB  |
 AI (CUDA)| fp16 | 1440x1080    | DNxHR | yuv422p10     | ~36.8 fps | 2.2 GB  |
 
+
+
+## Limitations
+- No tensorRT engine. Reason: i wanted to evaluate the rendering before.
+   __currently working on it!__
+- pass additional args to FFmpeg. _Reason: not needed for my workflow, but will do to improve h265_
+- rendering a clip of a longer video. _Reason: in my workflow, this step is done shot by shot_
+- installation of temporal classic only. _Reason: i don't want to spend time on this because it installs the packages needed for the other tools_
+- complete validation. _Reason: i don't care yet because it's working for my need (DNxHR, H265)_
 
 &nbsp;
 &nbsp;
