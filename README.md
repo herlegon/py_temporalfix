@@ -138,7 +138,11 @@ AI (CUDA)| fp16 | 1440x1080    | H265  | yuv422p10     | ~37.5 fps | 2.2 GB  |
 AI (CUDA)| fp32 | 1440x1080    | DNxHR | yuv422p10     | ~29.0 fps | 3.2 GB  |
 AI (CUDA)| fp16 | 1440x1080    | DNxHR | yuv422p10     | ~36.8 fps | 2.2 GB  |
 
-
+1500 frames
+Type     | Datatype | Resolution   | Codec | Pixel Format  | FPS       | VRAM (peak)  |
+| :--- | :---: | :---: | ---: | ---: | ---: | ---: |
+AI (TensorRT)| fp16 | 1440x1080    | DNxHR | yuv422p10     | ~45 fps | 4.6 GB  |
+AI (TensorRT)| fp16 | 1440x1080    | DNxHR | yuv422p10     | ~80 fps | 2.6 GB  |
 
 ## Limitations
 - No tensorRT engine. Reason: i wanted to evaluate the rendering before.

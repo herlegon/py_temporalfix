@@ -214,12 +214,14 @@ class TrtTemporalInferenceThread(BaseThread):
         prescale: tuple[int, int, int] | float | None = None,
     ) -> None:
         self.model = model
-        self.cache = TrtTemporalFrameCacheMirroring(window_size=model.arch.infer_type.inputs)
+        self.cache = TrtTemporalFrameCacheMirroring()
         self.trt_session: TensorRtSession = nnlib.session(model=model)
+        self.infer_stream = torch.cuda.Stream(device)
         self.trt_session.initialize(
             device=device,
             dtype=dtype,
             warmup=False,
+            infer_stream=self.infer_stream,
         )
 
         if isinstance(prescale, list | tuple):
@@ -229,13 +231,13 @@ class TrtTemporalInferenceThread(BaseThread):
 
 
     def run(self):
-        self.perform_cuda_infer()
+        self.perform_trt_infer()
         while not self.in_queue.empty():
             self.in_queue.get_nowait()
 
 
     @torch.inference_mode()
-    def perform_cuda_infer(self) -> None:
+    def perform_trt_infer(self) -> None:
         verbose: bool = self.verbose
         if verbose:
             verbose_prefix: str = "[V][I][TRT]"
@@ -244,7 +246,7 @@ class TrtTemporalInferenceThread(BaseThread):
         cache: TrtTemporalFrameCacheMirroring = self.cache
 
         session = self.trt_session
-        cuda_stream = torch.cuda.Stream(session.device)
+        cuda_stream = self.infer_stream
         session_dtype: torch.dtype = session.dtype
         context, engine = session.context, session.engine
 
@@ -273,13 +275,10 @@ class TrtTemporalInferenceThread(BaseThread):
             context.execute_async_v3(stream_handle=cuda_stream.cuda_stream)
             return out, new_feat
 
-
-        scale = self.trt_session.model.scale
-
         with torch.cuda.stream(cuda_stream):
             while not self._stop_event.is_set():
                 if verbose:
-                    dlogger.debug(blue("[V][I][CUDA] waiting"))
+                    dlogger.debug(blue("[V][I][TRT] waiting"))
 
                 frame = None
                 if not cache.emptying():
@@ -312,7 +311,7 @@ class TrtTemporalInferenceThread(BaseThread):
                     # Append frame to cache (resized)
                     frame.tensor = frame.tensor.to(dtype=session_dtype).contiguous()
                     if verbose:
-                        dlogger.debug(f"cache {frame.f_no}: {frame.tensor.data_ptr()}")
+                        dlogger.debug(f"[V][I][TRT] cache {frame.f_no}: {frame.tensor.data_ptr()}")
 
                     cache.append(frame=frame)
 
@@ -323,6 +322,7 @@ class TrtTemporalInferenceThread(BaseThread):
                 if not cache.is_ready():
                     # Warm-up: the first radius frames never go through a real window.
                     # Run the engine only to get their feature (mask = 0, output discarded).
+                    dlogger.debug(f"[V][I][TRT] cache not ready")
                     if not dummy:
                         _, _, h, w = frame.tensor.shape
                         dummy["x"] = torch.zeros((1, 7, 3, h, w), dtype=session_dtype, device=frame.tensor.device)
@@ -337,13 +337,12 @@ class TrtTemporalInferenceThread(BaseThread):
                 window = cache.get_window()
                 if window is None:
                     raise ValueError("Not enough frames in window, why?")
-                in_tensors, in_feats = window   # (1,7,3,H,W), (1,7,4,H,W)
+                x, feats, new_frame, mask = window   # (1,7,3,H,W), (1,7,4,H,W), (1,3,H,W), (1,7,1,1,1)
                 if verbose:
-                    dlogger.debug(f"   window: {in_tensors.data_ptr()}, feats: {in_feats.data_ptr()}")
+                    dlogger.debug(f"[V][I][TRT] window: {x.data_ptr()}, feats: {feats.data_ptr()}")
 
                 # inference
                 #-----------------------------------------------------------------------------
-                x, feats, new_frame, mask = window
                 out_tensor, new_feat = run_engine(x, feats, new_frame, mask)
                 # no-op while emptying (nothing pending)
                 cache.commit_feat(new_feat)
@@ -358,11 +357,11 @@ class TrtTemporalInferenceThread(BaseThread):
                 self.consumer.put_frame(out_frame)
 
                 if cache.is_empty():
-                    dlogger.debug(blue(f"[V][I][CUDA] cache is empty, break"))
+                    dlogger.debug(blue(f"[V][I][TRT] cache is empty, break"))
                     break
 
         if verbose:
-            dlogger.debug(blue(f"[V][I][CUDA] Ended"))
+            dlogger.debug(blue(f"[V][I][TRT] Ended"))
 
         # Send a poison pill ?
         self.consumer.put(None)

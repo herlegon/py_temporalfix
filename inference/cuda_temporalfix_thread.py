@@ -194,13 +194,13 @@ class CudaTemporalInferenceThread(BaseThread):
     ) -> None:
         self.model = model
         self.cache = TemporalFrameCacheMirroring(window_size=model.arch.infer_type.inputs)
+        self.infer_stream = torch.cuda.Stream(device)
         self.cuda_session: PyTorchSession = nnlib.session(model=model)
         self.cuda_session.initialize(
             device=device,
             dtype=dtype,
             warmup=False,
         )
-        self.infer_stream = torch.cuda.Stream(device)
 
         if isinstance(prescale, list | tuple):
             self.prescale = (prescale[0], prescale[1])

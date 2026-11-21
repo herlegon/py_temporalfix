@@ -42,6 +42,8 @@ from nnarchs import (
     HdtypeToTorch,
     NnFrameworkType,
     PyTorchModel,
+    generate_out_model_fp,
+    ShapeStrategy,
 )
 from hsys import (
     is_feature_supported,
@@ -50,6 +52,7 @@ from hsys import (
 from hinstall import download_models
 
 from inference.cuda_temporalfix_thread import CudaTemporalInferenceThread
+from inference.trt_temporalfix_thread import TrtTemporalInferenceThread
 from inference.run_threads import run_threads
 
 
@@ -143,28 +146,79 @@ Higher resolution tends to need higher strength. Too high may oversmooth small m
     strength_upper = math.ceil(strength)
     weighting = strength - strength_lower
 
-    vram_monitor = VramMonitor(device=0)
-    vram_monitor.start()
 
-    model: PyTorchModel = nnlib.open(model_path=model_dir / temporal_models[strength_lower])
-    if strength_lower != strength_upper:
-        lower_model: PyTorchModel = model
-        upper_model: PyTorchModel = nnlib.open(model_path=model_dir / temporal_models[strength_upper])
+    # Inference device
+    device: str = "cuda:0"
 
-        # lower_model.state_dict
-        # upper_model.state_dict
-        consolidated_state_dict = OrderedDict(
-            (
-                key, torch.lerp(value, upper_model.state_dict[key], weighting)
-                if torch.is_floating_point(value) else value
-            )
-            for key, value in lower_model.state_dict.items()
+    # Open and convert model
+    torch_model_path: Path = model_dir / temporal_models[strength_lower]
+    torch_model: PyTorchModel = nnlib.open(torch_model_path)
+    tensorrt_model_fp: Path = None
+    is_inference_trt: bool = args.trt
+    dlogger.info(lightcyan(f"Framework: ") + f"{'TensorRT' if is_inference_trt else 'CUDA'}")
+    if is_inference_trt:
+        # Try to load trt engine if already exists
+        shape_strategy: ShapeStrategy = ShapeStrategy(
+            type='static',
+            opt_size=list(reversed(in_media.video.shape[:2]))
+        )
+        trt_dtype = 'fp16' if args.fp16 else 'fp32'
+        opset: int = 20
+        tensorrt_model_fp: Path = generate_out_model_fp(
+            model=torch_model,
+            to=NnFrameworkType.TENSORRT,
+            opset=opset,
+            dtype=trt_dtype,
+            device=device,
+            out_dir=model_dir,
+            shape_strategy=shape_strategy,
+            suffix=f"{args.strength}",
         )
 
-        # Let's patch the model state_dict
-        model.state_dict = consolidated_state_dict
-        # No need to keep the uppdermodel in memory
-        del upper_model
+    # Generate the torch model used for the inference
+    if (
+        (is_inference_trt and not tensorrt_model_fp.exists())
+        or not is_inference_trt
+    ):
+        if strength_lower != strength_upper:
+            lower_model: PyTorchModel = torch_model
+            upper_model: PyTorchModel = nnlib.open(model_path=model_dir / temporal_models[strength_upper])
+
+            # lower_model.state_dict
+            # upper_model.state_dict
+            consolidated_state_dict = OrderedDict(
+                (
+                    key, torch.lerp(value, upper_model.state_dict[key], weighting)
+                    if torch.is_floating_point(value) else value
+                )
+                for key, value in lower_model.state_dict.items()
+            )
+
+            # Let's patch the model state_dict
+            torch_model.state_dict = consolidated_state_dict
+            # No need to keep the uppdermodel in memory
+            del upper_model
+
+    if is_inference_trt:
+        dlogger.info(lightcyan("TensortRT engine filepath: ") + f"{tensorrt_model_fp}")
+        if not tensorrt_model_fp.exists():
+            dlogger.info(lightcyan(f"\nConvert model to a tensorRT engine:"))
+            dlogger.info(blue("    Device: ") + f"{device}")
+            dlogger.info(blue("    Resolution: ") + f"{shape_strategy.opt_size}")
+            dlogger.info(blue("    Datatype: ") + f"{trt_dtype}")
+            model = nnlib.convert_to_tensorrt(
+                model=torch_model,
+                shape_strategy=shape_strategy,
+                dtype=trt_dtype,
+                device=device,
+                opset=opset,
+                out_dir=model_dir,
+                suffix=f"{args.strength}",
+            )
+        else:
+            model = nnlib.open(model_path=tensorrt_model_fp)
+    else:
+        model = torch_model
 
     dlogger.info(lightcyan(f"\nModel:"))
     dlogger.debug(model)
@@ -173,20 +227,28 @@ Higher resolution tends to need higher strength. Too high may oversmooth small m
     dlogger.info(blue(f"  scale: ") + f"{model.scale}")
 
     # use cuda device 0 by default
-    device = "cuda:0"
     in_media.video.device = Device(name=device)
     out_media.video.device = Device(name=device)
 
-    infer_dtype: Hdtype = 'fp32'
-    if args.fp32:
-        infer_dtype = 'fp32'
-    elif args.fp16:
-        infer_dtype = 'fp16'
-    elif args.bf16:
-        infer_dtype = 'bf16'
+    if is_inference_trt:
+        infer_dtype: Hdtype = trt_dtype
+    else:
+        infer_dtype: Hdtype = 'fp32'
+        if args.fp32:
+            infer_dtype = 'fp32'
+        elif args.fp16:
+            infer_dtype = 'fp16'
+        elif args.bf16:
+            infer_dtype = 'bf16'
 
     dlogger.info(blue(f"  device: ") + f"{device}")
     dlogger.info(blue(f"  datatype: ") + f"{infer_dtype}")
+
+    # Resource monitor: device
+    device_arg_list = device.split(':')
+    cuda_device_no = int(device_arg_list[-1] if len(device_arg_list) > 1 else 0)
+    vram_monitor = VramMonitor(device=cuda_device_no)
+    vram_monitor.start()
 
     # Chain
     #-------------------------------------------------------------------------------------
@@ -201,7 +263,13 @@ Higher resolution tends to need higher strength. Too high may oversmooth small m
     dlogger.debug(f"input->FFmpeg pipe: {out_media.video.pipe_format}")
     encoder_thread = EncoderThread(media_stream=out_media, verbose=debug)
 
-    infer_thread = CudaTemporalInferenceThread(name=model.arch.name, debug=debug)
+
+    infer_thread: TrtTemporalInferenceThread |  CudaTemporalInferenceThread
+    if is_inference_trt:
+        infer_thread = TrtTemporalInferenceThread(name=model.arch.name, debug=debug)
+    else:
+        infer_thread = CudaTemporalInferenceThread(name=model.arch.name, debug=debug)
+
     infer_thread.initialize(
             model=model,
             device=device,
