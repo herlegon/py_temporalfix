@@ -141,7 +141,7 @@ AI (CUDA)| fp16 | 1440x1080    | DNxHR | yuv422p10     | ~36.8 fps | 2.2 GB  |
 1500 frames
 Type     | Datatype | Resolution   | Codec | Pixel Format  | FPS       | VRAM (peak)  |
 | :--- | :---: | :---: | ---: | ---: | ---: | ---: |
-AI (TensorRT)| fp16 | 1440x1080    | DNxHR | yuv422p10     | ~45 fps | 4.6 GB  |
+AI (TensorRT)| fp32 | 1440x1080    | DNxHR | yuv422p10     | ~45 fps | 4.6 GB  |
 AI (TensorRT)| fp16 | 1440x1080    | DNxHR | yuv422p10     | ~80 fps | 2.6 GB  |
 
 ## Limitations
