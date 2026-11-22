@@ -48,6 +48,7 @@ from nnarchs import (
 from hsys import (
     is_feature_supported,
     VramMonitor,
+    get_cuda_gpu_name,
 )
 from hinstall import download_models
 
@@ -225,6 +226,7 @@ Higher resolution tends to need higher strength. Too high may oversmooth small m
     dlogger.info(blue(f"  framework: ") + model.framework.type.value)
     dlogger.info(blue(f"  arch: ") + f"{model.arch_name}")
     dlogger.info(blue(f"  scale: ") + f"{model.scale}")
+    dlogger.info(blue(f"  device: ") + f"{get_cuda_gpu_name(device=device)}")
 
     # use cuda device 0 by default
     in_media.video.device = Device(name=device)
